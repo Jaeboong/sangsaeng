@@ -75,6 +75,70 @@ WEEKLY_COMPARISON_FIELDS = [
     "period_warning",
 ]
 
+DISPLAY_HEADER_LABELS = {
+    "date": "날짜",
+    "channel": "채널",
+    "campaign": "캠페인",
+    "cost": "비용(원)",
+    "impressions": "노출수",
+    "clicks": "클릭수",
+    "conversions": "전환수",
+    "revenue": "매출(원)",
+    "vat_basis": "부가세 기준",
+    "conversion_definition": "전환 정의",
+    "revenue_definition": "매출 정의",
+    "source_dimensions": "원본 차원",
+    "source_file": "원본 파일",
+    "source_row_number": "원본 행 번호",
+    "source_file_hash": "원본 파일 해시",
+    "schema_version": "스키마 버전",
+    "adapter_version": "어댑터 버전",
+    "metric": "지표",
+    "previous_week_start": "전주 시작일",
+    "previous_week_end": "전주 종료일",
+    "current_week_start": "금주 시작일",
+    "current_week_end": "금주 종료일",
+    "previous_value": "전주 값",
+    "current_value": "금주 값",
+    "change": "증감",
+    "change_rate": "증감률",
+    "previous_days": "전주 데이터 일수",
+    "current_days": "금주 데이터 일수",
+    "comparison_status": "비교 상태",
+    "exclusion_reason": "제외 사유",
+    "period_warning": "기간 경고",
+}
+
+DISPLAY_VALUE_LABELS = {
+    "channel": {
+        "ga4": "구글 애널리틱스 4(GA4)",
+        "meta": "메타",
+        "naver_search": "네이버 검색광고",
+        "naver_gfa": "네이버 성과형 디스플레이 광고(GFA)",
+        "kakao_moment": "카카오 모먼트",
+    },
+    "metric": {
+        "cost": "비용",
+        "impressions": "노출수",
+        "clicks": "클릭수",
+        "conversions": "전환수",
+        "revenue": "매출",
+        "cpa": "전환당 비용(CPA)",
+        "roas": "광고수익률(ROAS)",
+        "conversion_rate": "전환율",
+    },
+    "vat_basis": {
+        "included": "부가세 포함",
+        "excluded": "부가세 제외",
+        "unknown": "확인 필요",
+        "not_applicable": "해당 없음",
+    },
+    "comparison_status": {
+        "comparable": "비교 가능",
+        "excluded": "비교 제외",
+    },
+}
+
 
 def quote_sheet_title(title: str) -> str:
     return "'" + title.replace("'", "''") + "'"
@@ -106,6 +170,37 @@ class SheetPayload:
     @property
     def data_rows(self) -> int:
         return len(self.values) - 1
+
+
+def build_display_values(payload: SheetPayload) -> list[list[Any]]:
+    fields = payload.values[0]
+    missing_headers = [field for field in fields if field not in DISPLAY_HEADER_LABELS]
+    if missing_headers:
+        raise ValueError(f"표시 헤더 미등록: {', '.join(map(str, missing_headers))}")
+
+    display_values: list[list[Any]] = [
+        [DISPLAY_HEADER_LABELS[str(field)] for field in fields]
+    ]
+    for row_number, row in enumerate(payload.values[1:], start=2):
+        if len(row) != len(fields):
+            raise ValueError(
+                f"{payload.sheet_title}:{row_number}: 표시 변환 열 수 불일치"
+            )
+        display_row: list[Any] = []
+        for field, value in zip(fields, row, strict=True):
+            value_labels = DISPLAY_VALUE_LABELS.get(str(field))
+            if value_labels is None or value == "":
+                display_row.append(value)
+                continue
+            code = str(value)
+            if code not in value_labels:
+                raise ValueError(
+                    f"{payload.sheet_title}:{row_number}: "
+                    f"표시 코드 미등록: {field}={code!r}"
+                )
+            display_row.append(value_labels[code])
+        display_values.append(display_row)
+    return display_values
 
 
 @dataclass(frozen=True)
@@ -812,14 +907,21 @@ def upload_payloads(
     gateway.add_sheets(missing_titles)
 
     clear_ranges = [payload.clear_range for payload in payloads]
-    write_data = {payload.data_range: payload.values for payload in payloads}
+    display_values = {
+        payload.verification_range: build_display_values(payload)
+        for payload in payloads
+    }
+    write_data = {
+        payload.data_range: display_values[payload.verification_range]
+        for payload in payloads
+    }
     gateway.clear_ranges(clear_ranges)
     updated_cells = gateway.write_ranges(write_data)
 
     verification_ranges = [payload.verification_range for payload in payloads]
     actual_data = gateway.read_ranges(verification_ranges)
     for payload in payloads:
-        expected_values = payload.values
+        expected_values = display_values[payload.verification_range]
         actual_values = actual_data.get(payload.verification_range)
         if actual_values is None or pad_readback_rows(
             actual_values, len(expected_values[0])
@@ -893,6 +995,8 @@ def main() -> None:
     payloads = load_channel_payloads(args.normalized_dir)
     if args.weekly_comparison:
         payloads.append(load_weekly_comparison(args.weekly_comparison))
+    for payload in payloads:
+        build_display_values(payload)
     print(f"validated_tabs={len(payloads)}")
     print(f"validated_rows={sum(payload.data_rows for payload in payloads)}")
     for payload in payloads:
@@ -900,6 +1004,7 @@ def main() -> None:
             f"sheet[{payload.channel}]={payload.sheet_title} "
             f"rows={payload.data_rows} source={payload.source_path}"
         )
+    print("validated_display_labels=true")
 
     if args.dry_run:
         print("dry_run=true")

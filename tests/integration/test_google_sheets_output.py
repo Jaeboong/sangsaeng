@@ -9,8 +9,10 @@ from typing import Any, Sequence
 
 from src.outputs.google_sheets import (
     CHANNEL_SHEETS,
+    DISPLAY_HEADER_LABELS,
     OUTPUT_FIELDS,
     WEEKLY_COMPARISON_FIELDS,
+    build_display_values,
     build_format_requests,
     load_channel_payloads,
     load_weekly_comparison,
@@ -20,6 +22,13 @@ from src.outputs.google_sheets import (
 
 
 def write_fixture_files(directory: Path) -> None:
+    vat_basis_by_channel = {
+        "ga4": "not_applicable",
+        "meta": "unknown",
+        "naver_search": "excluded",
+        "naver_gfa": "included",
+        "kakao_moment": "unknown",
+    }
     for index, (channel, (filename, _)) in enumerate(CHANNEL_SHEETS.items(), start=1):
         row = {field: "" for field in OUTPUT_FIELDS}
         row.update(
@@ -31,6 +40,7 @@ def write_fixture_files(directory: Path) -> None:
                 "impressions": str(index * 1000),
                 "clicks": str(index * 10),
                 "conversions": str(index),
+                "vat_basis": vat_basis_by_channel[channel],
                 "source_file": f"source-{index}.csv",
                 "source_row_number": "2",
                 "source_file_hash": f"hash-{index}",
@@ -172,6 +182,52 @@ class GoogleSheetsOutputTest(unittest.TestCase):
         self.assertEqual(len(gateway.cleared), 5)
         self.assertEqual(len(gateway.formatted_channels), 5)
         self.assertEqual(report.updated_cells, 5 * 2 * len(OUTPUT_FIELDS))
+        ga4_values = gateway.data["'GA4'!A1"]
+        self.assertEqual(ga4_values[0], [DISPLAY_HEADER_LABELS[field] for field in OUTPUT_FIELDS])
+        self.assertEqual(
+            ga4_values[1][OUTPUT_FIELDS.index("channel")],
+            "구글 애널리틱스 4(GA4)",
+        )
+        self.assertEqual(ga4_values[1][OUTPUT_FIELDS.index("vat_basis")], "해당 없음")
+
+    def test_display_values_preserve_internal_schema_and_localize_codes(self) -> None:
+        channel_payload = load_channel_payloads(self.directory)[0]
+        channel_display = build_display_values(channel_payload)
+
+        self.assertEqual(channel_payload.values[0], OUTPUT_FIELDS)
+        self.assertEqual(
+            channel_display[0],
+            [DISPLAY_HEADER_LABELS[field] for field in OUTPUT_FIELDS],
+        )
+        self.assertEqual(
+            channel_display[1][OUTPUT_FIELDS.index("channel")],
+            "구글 애널리틱스 4(GA4)",
+        )
+        self.assertEqual(
+            channel_display[1][OUTPUT_FIELDS.index("vat_basis")],
+            "해당 없음",
+        )
+
+        weekly_payload = load_weekly_comparison(self.weekly_path)
+        weekly_display = build_display_values(weekly_payload)
+        self.assertEqual(weekly_payload.values[0], WEEKLY_COMPARISON_FIELDS)
+        self.assertEqual(
+            weekly_display[0],
+            [DISPLAY_HEADER_LABELS[field] for field in WEEKLY_COMPARISON_FIELDS],
+        )
+        self.assertEqual(weekly_display[1][0], "메타")
+        self.assertEqual(weekly_display[1][2], "전환당 비용(CPA)")
+        self.assertEqual(weekly_display[1][13], "비교 가능")
+        self.assertEqual(weekly_display[2][0], "구글 애널리틱스 4(GA4)")
+        self.assertEqual(weekly_display[2][2], "비용")
+        self.assertEqual(weekly_display[2][13], "비교 제외")
+
+    def test_display_values_reject_unregistered_code(self) -> None:
+        payload = load_weekly_comparison(self.weekly_path)
+        payload.values[1][2] = "new_metric"
+
+        with self.assertRaisesRegex(ValueError, "표시 코드 미등록"):
+            build_display_values(payload)
 
     def test_format_requests_include_freeze_filter_widths_and_hidden_metadata(self) -> None:
         payload = load_channel_payloads(self.directory)[0]

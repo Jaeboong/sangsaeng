@@ -8,8 +8,8 @@
 
 | 구분 | 기준 |
 |---|---|
-| 대상 스프레드시트 ID | `16C7sveoNxOejIbanH_SqMedTXLbCdx0NBc9M1TAGUo4` |
-| 인증 파일 | `secret/jaram-500915-0441601b6b71.json` |
+| 대상 스프레드시트 ID | `.env`의 `GOOGLE_SHEETS_SPREADSHEET_ID` |
+| 인증 파일 | `.env`의 `GOOGLE_APPLICATION_CREDENTIALS` |
 | 출력 어댑터 | `src/outputs/google_sheets.py` |
 | 채널 정규화 결과 | `output/normalized/*_normalized.csv` |
 | 전주 비교 결과 | `output/reports/weekly_comparison.csv` |
@@ -47,8 +47,8 @@ python -m pip install google-api-python-client google-auth
 현재 PowerShell 세션에만 적용되는 설정.
 
 ```powershell
-$env:GOOGLE_APPLICATION_CREDENTIALS = (Resolve-Path "secret\jaram-500915-0441601b6b71.json").Path
-$env:GOOGLE_SHEETS_SPREADSHEET_ID = "16C7sveoNxOejIbanH_SqMedTXLbCdx0NBc9M1TAGUo4"
+$env:GOOGLE_APPLICATION_CREDENTIALS = (Resolve-Path "secret\service-account.json").Path
+$env:GOOGLE_SHEETS_SPREADSHEET_ID = "your_spreadsheet_id"
 ```
 
 환경변수 값 확인 시 인증 파일의 경로까지만 출력. JSON 내용 또는 `private_key` 출력 금지.
@@ -94,6 +94,20 @@ for title, value_range in zip(titles, result.get("valueRanges", []), strict=True
 
 예상 핵심 탭은 `GA4`, `Meta`, `네이버 검색광고`, `네이버 GFA`, `카카오 모먼트`, `전주비교`. 추가 탭 존재 자체는 오류가 아니며, 검증 범위는 작업 목적에 따라 명시적으로 제한.
 
+## 한글 표시 계약
+
+로컬 CSV와 Python 내부에서는 영문 필드명과 코드값을 유지. `src/outputs/google_sheets.py`의 출력 단계에서만 한글 표시값으로 변환.
+
+| 구분 | 내부값 예시 | 시트 표시 예시 |
+|---|---|---|
+| 헤더 | `date`, `vat_basis`, `source_file_hash` | `날짜`, `부가세 기준`, `원본 파일 해시` |
+| 채널 | `ga4`, `meta`, `naver_gfa` | `구글 애널리틱스 4(GA4)`, `메타`, `네이버 성과형 디스플레이 광고(GFA)` |
+| 지표 | `cost`, `cpa`, `roas` | `비용`, `전환당 비용(CPA)`, `광고수익률(ROAS)` |
+| 부가세 기준 | `included`, `excluded`, `unknown`, `not_applicable` | `부가세 포함`, `부가세 제외`, `확인 필요`, `해당 없음` |
+| 비교 상태 | `comparable`, `excluded` | `비교 가능`, `비교 제외` |
+
+캠페인명, 원본 차원, 원본 파일명, 해시, 수치, 날짜, 결측은 원문 유지. 등록되지 않은 신규 코드값은 임의 번역이나 영문 노출 대신 업로드 실패.
+
 ## 로컬 CSV와 전체 값 대조
 
 기존 로더의 스키마·형 변환 규칙을 재사용하고 API는 읽기 전용 범위로 생성하는 예시. Google API가 행 끝의 빈 셀을 생략하는 동작은 `pad_readback_rows`로 보정.
@@ -107,6 +121,7 @@ from google.oauth2.service_account import Credentials
 from googleapiclient.discovery import build
 
 from src.outputs.google_sheets import (
+    build_display_values,
     load_channel_payloads,
     load_weekly_comparison,
     pad_readback_rows,
@@ -133,9 +148,10 @@ response = service.spreadsheets().values().batchGet(
 ).execute()
 
 for payload, value_range in zip(payloads, response.get("valueRanges", []), strict=True):
-    width = len(payload.values[0])
+    expected = build_display_values(payload)
+    width = len(expected[0])
     actual = pad_readback_rows(value_range.get("values", []), width)
-    if actual != payload.values:
+    if actual != expected:
         raise SystemExit(f"MISMATCH: {payload.sheet_title}")
     print(f"OK: {payload.sheet_title} rows={payload.data_rows}")
 '@ | python -B -
@@ -184,7 +200,7 @@ for sheet in result.get("sheets", []):
 
 ## 업로드 전 검증
 
-로컬 CSV의 존재, 스키마, 채널 코드, 중복 키, 숫자 파싱만 확인하고 API를 호출하지 않는 명령.
+로컬 CSV의 존재, 스키마, 채널 코드, 중복 키, 숫자 파싱, 한글 표시 매핑을 확인하고 API를 호출하지 않는 명령.
 
 ```powershell
 python -B src/outputs/google_sheets.py output/normalized `
@@ -192,11 +208,11 @@ python -B src/outputs/google_sheets.py output/normalized `
   --dry-run
 ```
 
-`--dry-run` 성공은 시트 현재값과의 일치 보장이 아니라 로컬 입력 검증 통과를 의미.
+`--dry-run` 성공은 시트 현재값과의 일치 보장이 아니라 로컬 입력과 한글 표시 라벨 검증 통과를 의미.
 
 ## 실제 업로드
 
-다음 명령은 5개 채널 탭과 `전주비교` 탭을 초기화하고 다시 작성한 뒤 전체 값을 재조회하고 서식을 반영.
+다음 명령은 5개 채널 탭과 `전주비교` 탭을 초기화하고 한글 표시값으로 다시 작성한 뒤 전체 값을 재조회하고 서식을 반영.
 
 ```powershell
 python -B src/outputs/google_sheets.py output/normalized `
