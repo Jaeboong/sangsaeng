@@ -2,6 +2,12 @@
 
 광고 채널별 원본 CSV를 공통 형식으로 정규화하고 CPA·ROAS·전환율과 전주 대비 증감을 계산한 뒤, 로컬 CSV와 구글시트에 반영하는 Windows 실행 파일.
 
+## 제출물
+
+1. [설계 메모](설계메모.md)
+2. [동작 결과물](Sangsaeng_Report_Automation.exe) · [Google Sheets 결과](https://docs.google.com/spreadsheets/d/1fInri5U_FMkxOEE0x4ChEBXyV6MkdY3dPLUgZAoNXMw/edit?usp=sharing)
+3. [AI 활용 기록](AI_활용기록.md)
+
 ## 구현 범위
 
 - 지원 채널: GA4, Meta, 네이버 검색광고, 네이버 GFA, 카카오 모먼트
