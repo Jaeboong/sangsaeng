@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import ctypes
+import io
 import os
 import sys
+from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
 
 from src.pipeline import main as pipeline_main
@@ -39,6 +41,22 @@ def _message_box(message: str, *, success: bool) -> None:
     )
 
 
+def _failure_message(stderr_text: str) -> str:
+    detail = ""
+    for line in reversed(stderr_text.splitlines()):
+        if line.startswith("error="):
+            detail = line.removeprefix("error=").strip()
+            break
+    if not detail:
+        detail = "알 수 없는 오류"
+    return (
+        "처리를 완료하지 못했습니다.\n\n"
+        f"원인: {detail}\n\n"
+        "입력 CSV는 data/input 폴더에 넣어 주세요.\n"
+        "상세 기록: output/logs의 최신 로그"
+    )
+
+
 def main() -> int:
     _configure_console()
     root = _application_root()
@@ -47,7 +65,10 @@ def main() -> int:
     arguments = sys.argv[1:]
     no_dialog = "--no-dialog" in arguments
     arguments = [argument for argument in arguments if argument != "--no-dialog"]
-    exit_code = pipeline_main(arguments)
+    stdout_buffer = io.StringIO()
+    stderr_buffer = io.StringIO()
+    with redirect_stdout(stdout_buffer), redirect_stderr(stderr_buffer):
+        exit_code = pipeline_main(arguments)
 
     if not no_dialog:
         if exit_code == 0:
@@ -58,8 +79,7 @@ def main() -> int:
             )
         else:
             _message_box(
-                "처리를 완료하지 못했습니다.\n\n"
-                ".env, data/input, secret 설정과 output/logs의 최신 로그를 확인해 주세요.",
+                _failure_message(stderr_buffer.getvalue()),
                 success=False,
             )
     return exit_code

@@ -93,7 +93,7 @@ REFERENCE_DATE=
 
 [`Sangsaeng_Report_Automation.exe`](Sangsaeng_Report_Automation.exe) 실행.
 
-별도 Python 설치와 터미널 명령 없이 실행. 완료 또는 실패 결과를 대화상자로 표시. 실패 시 `output/logs/`의 최신 로그 확인.
+별도 Python 설치와 터미널 명령 없이 실행. 완료 또는 실패 결과를 대화상자로 표시. 실패 시 대화상자에 실제 원인과 로그 위치 표시.
 
 코드 서명 인증서가 없는 실행 파일이므로 다른 PC에서 Windows SmartScreen 경고가 표시될 수 있음. 저장소 출처와 SHA-256 확인 후 `추가 정보 → 실행` 선택.
 
