@@ -4,7 +4,7 @@ import argparse
 import csv
 import re
 from collections import defaultdict
-from decimal import Decimal, ROUND_HALF_UP
+from decimal import Decimal, DecimalException, ROUND_HALF_UP
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
@@ -141,14 +141,38 @@ def _join_reasons(reasons: Iterable[str]) -> str:
     return " | ".join(dict.fromkeys(reason for reason in reasons if reason))
 
 
-def _ratio(numerator: int, denominator: int) -> Decimal:
-    return (Decimal(numerator) / Decimal(denominator)).quantize(
-        RATIO_SCALE, rounding=ROUND_HALF_UP
+def _quantized_division(
+    numerator: int,
+    denominator: int,
+    scale: Decimal,
+    metric_name: str,
+    group_context: str,
+) -> Decimal:
+    try:
+        return (Decimal(numerator) / Decimal(denominator)).quantize(
+            scale, rounding=ROUND_HALF_UP
+        )
+    except DecimalException as error:
+        raise ValueError(
+            f"{metric_name} 계산 범위 초과 ({group_context})"
+        ) from error
+
+
+def _ratio(
+    numerator: int, denominator: int, metric_name: str, group_context: str
+) -> Decimal:
+    return _quantized_division(
+        numerator, denominator, RATIO_SCALE, metric_name, group_context
     )
 
 
-def _percent(ratio: Decimal) -> Decimal:
-    return (ratio * 100).quantize(PERCENT_SCALE, rounding=ROUND_HALF_UP)
+def _percent(ratio: Decimal, metric_name: str, group_context: str) -> Decimal:
+    try:
+        return (ratio * 100).quantize(PERCENT_SCALE, rounding=ROUND_HALF_UP)
+    except DecimalException as error:
+        raise ValueError(
+            f"{metric_name} 퍼센트 계산 범위 초과 ({group_context})"
+        ) from error
 
 
 def _metric_missing_reason(field: str, count: int) -> str:
@@ -277,22 +301,36 @@ def aggregate_metrics(
             conversion_rate_reasons.append("분모 0: clicks")
 
         cpa = None
+        group_context = ", ".join(
+            f"{field}={value!r}" for field, value in zip(group_fields, key)
+        )
         if not cpa_reasons:
-            cpa = (Decimal(totals["cost"]) / Decimal(totals["conversions"])).quantize(
-                CPA_SCALE, rounding=ROUND_HALF_UP
+            cpa = _quantized_division(
+                totals["cost"],
+                totals["conversions"],
+                CPA_SCALE,
+                "CPA",
+                group_context,
             )
 
         roas = None
         roas_percent = None
         if not roas_reasons:
-            roas = _ratio(totals["revenue"], totals["cost"])
-            roas_percent = _percent(roas)
+            roas = _ratio(totals["revenue"], totals["cost"], "ROAS", group_context)
+            roas_percent = _percent(roas, "ROAS", group_context)
 
         conversion_rate = None
         conversion_rate_percent = None
         if not conversion_rate_reasons:
-            conversion_rate = _ratio(totals["conversions"], totals["clicks"])
-            conversion_rate_percent = _percent(conversion_rate)
+            conversion_rate = _ratio(
+                totals["conversions"],
+                totals["clicks"],
+                "전환율",
+                group_context,
+            )
+            conversion_rate_percent = _percent(
+                conversion_rate, "전환율", group_context
+            )
 
         result: dict[str, object] = dict(zip(group_fields, key))
         summary_fields = {

@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import csv
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from decimal import Decimal
@@ -274,6 +277,41 @@ class ProvidedDataAcceptanceTest(unittest.TestCase):
             self.assertEqual(
                 [source["campaign"] for source in rows], ["from-a", "from-b"]
             )
+
+    def test_cli_wraps_decimal_range_error_without_traceback(self) -> None:
+        project_root = Path(__file__).resolve().parents[2]
+        script_path = project_root / "src" / "metrics" / "calculate_metrics.py"
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            directory = Path(temporary_directory)
+            input_directory = directory / "input"
+            input_directory.mkdir()
+            write_normalized_csv(
+                input_directory / "x_normalized.csv",
+                [row(cost="9" * 30, conversions="4")],
+            )
+            output_path = directory / "output.csv"
+            environment = os.environ.copy()
+            environment["PYTHONDONTWRITEBYTECODE"] = "1"
+
+            completed = subprocess.run(
+                [
+                    sys.executable,
+                    "-B",
+                    str(script_path),
+                    str(input_directory),
+                    str(output_path),
+                ],
+                cwd=project_root,
+                env=environment,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(completed.returncode, 2)
+            self.assertIn("CPA 계산 범위 초과", completed.stderr)
+            self.assertNotIn("Traceback", completed.stderr)
+            self.assertFalse(output_path.exists())
 
 
 if __name__ == "__main__":
